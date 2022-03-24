@@ -235,9 +235,3 @@ if __name__ == "__main__":
         if isMircrobitConnected:
             readSerial()
         time.sleep(1)
-
-'''
-Problem remained:
-    1/ Cannot process locally (all the command (switch off, on buzzer) needs to send to adafruit and control on adafruit
-    2/  
-'''
