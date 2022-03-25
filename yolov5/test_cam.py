@@ -55,7 +55,7 @@ if __name__ == "__main__":
                    "doorStat": "lntloc/feeds/bbc-doorStat"
                    }
     AIO_USERNAME = "KanNan312"
-    AIO_KEY = "aio_FshX02nlj7KAZfaQRTvweeVHqE4X"
+    AIO_KEY = "aio_ArfV66ue6J6wc2bAnfISg4Jr0X17"
     # Establish MQTT connections:
     client = MQTTClient(AIO_USERNAME , AIO_KEY)
     client.on_connect = connected
@@ -68,4 +68,5 @@ if __name__ == "__main__":
         time.sleep(30)
         frame = cv2.imread('people.jpg')
         client.publish(AIO_FEED_ID['frame'], encodeImage(frame))
-        print(encodeImage(frame))
+        encodeImage(frame)
+#
