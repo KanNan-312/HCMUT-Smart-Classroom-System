@@ -1,0 +1,39 @@
+let cmd = ""
+let feedArray: string[] = []
+let feedName = ""
+let payload = ""
+serial.onDataReceived(serial.delimiters(Delimiters.Hash), function () {
+    cmd = serial.readUntil(serial.delimiters(Delimiters.Hash))
+    feedArray = cmd.split(":")
+    feedName = feedArray[0]
+    payload = feedArray[1]
+    if (feedName == "bbc-relay") {
+        if (payload == "1") {
+            NPNBitKit.Relay(DigitalPin.P0, true)
+        } else {
+            NPNBitKit.Relay(DigitalPin.P0, false)
+        }
+    }
+    if (feedName == "bbc-buzzer") {
+        if (payload == "1") {
+            NPNBitKit.Buzzer(DigitalPin.P2, true)
+        } else {
+            NPNBitKit.Buzzer(DigitalPin.P2, false)
+        }
+    }
+})
+basic.forever(function () {
+    if (NPNBitKit.ButtonDoorOpen(DigitalPin.P1)) {
+        serial.writeString("!1:DOOR:1#")
+    } else {
+        serial.writeString("!1:DOOR:0#")
+    }
+    basic.pause(2000)
+})
+basic.forever(function () {
+    if (NPNBitKit.Button(DigitalPin.P3)) {
+        NPNBitKit.Buzzer(DigitalPin.P2, false)
+        serial.writeString("!1:BUZZER:0#")
+    }
+    basic.pause(1000)
+})

@@ -1,0 +1,29 @@
+radio.onReceivedString(function (receivedString) {
+    serial.writeString(receivedString)
+})
+serial.onDataReceived(serial.delimiters(Delimiters.Hash), function () {
+    cmd = serial.readUntil(serial.delimiters(Delimiters.Hash))
+    feedArray = cmd.split(":")
+    feedName = feedArray[0]
+    payload = feedArray[1]
+    if (feedName == "bbc-relay") {
+        if (payload == "1") {
+            radio.sendNumber(0)
+        } else {
+            radio.sendNumber(1)
+        }
+    }
+    if (feedName == "bbc-buzzer") {
+        if (payload == "1") {
+            radio.sendNumber(2)
+        } else {
+            radio.sendNumber(3)
+        }
+    }
+})
+let payload = ""
+let feedName = ""
+let feedArray: string[] = []
+let cmd = ""
+radio.setGroup(30)
+led.enable(false)
