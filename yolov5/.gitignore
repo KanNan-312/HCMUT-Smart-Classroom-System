@@ -256,3 +256,5 @@ fabric.properties
 adafruit_key.json
 # Image for visualization
 images/**
+
+log.txt

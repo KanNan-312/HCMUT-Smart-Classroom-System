@@ -30,26 +30,27 @@ def disconnected(client):
 
 def message(client , feed_id , payload):
     # feed_id = feed_id.split('/')[-1]
-    print(f"Receive data from {feed_id}: {payload}")
+    if feed_id != AIO_FEED_ID['frame']:
+        print(f"Receive data from {feed_id}: {payload}")
     # Initial state:
-    global init
-    global state
-    if init:
-        if feed_id == AIO_FEED_ID['buzzer']:
-            state['buzzer'] = int(payload)
-        elif feed_id == AIO_FEED_ID['human']:
-            state['human'] = int(payload)
-        elif feed_id == AIO_FEED_ID['relay']:
-            state['relay'] = int(payload)
-        elif feed_id == AIO_FEED_ID['door']:
-            state['door'] = int(payload)
-        return
+    # global init
+    # global state
+    # if init:
+    #     if feed_id == AIO_FEED_ID['buzzer']:
+    #         state['buzzer'] = int(payload)
+    #     elif feed_id == AIO_FEED_ID['human']:
+    #         state['human'] = int(payload)
+    #     elif feed_id == AIO_FEED_ID['relay']:
+    #         state['relay'] = int(payload)
+    #     elif feed_id == AIO_FEED_ID['door']:
+    #         state['door'] = int(payload)
+    #     return
 
     # only send data when the data is different to the state
     if feed_id == AIO_FEED_ID['buzzer'] and int(payload) != state['buzzer']:
         state['buzzer'] = int(payload)
         encoded = (feed_id+":"+ str(payload) + "#").encode()
-        if isMircrobitConnected:
+        if isMicrobitConnected:
             print(f"Sending data to sensor: {encoded}")
             ser.write(encoded)
 
@@ -57,7 +58,7 @@ def message(client , feed_id , payload):
     # if feed_id == AIO_FEED_ID['relay']:
         state['relay'] = int(payload)
         encoded = (feed_id+":"+ str(payload) + "#").encode()
-        if isMircrobitConnected:
+        if isMicrobitConnected:
             print(f"Sending data to sensor: {encoded}")
             ser.write(encoded)
 
@@ -85,7 +86,7 @@ def processData(data):
     if len(splitData) != 3 or splitData[2] == "":
         return
     # touch the button, only accept the data when the state is changed
-    if splitData[1] == "BUZZER" and int(splitData[2]) != state['buzzer']:
+    if splitData[1] == "BUZZER":
         print(f"Receive buzzer sensor data: {splitData}")
         state['buzzer'] = 0
         client.publish(AIO_FEED_ID['buzzer'], splitData[2])
@@ -119,7 +120,8 @@ def encodeImage64(frame, ext='.jpg'):
     frame = cv2.resize(frame, (360,270))
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     _, img_arr = cv2.imencode(ext, frame)
-    img_base64 = base64.b64decode(img_arr.tobytes())
+    img_base64 = base64.b64encode(img_arr.tobytes())
+    # print(img_base64)
     return img_base64
 
 def timer():
@@ -127,14 +129,15 @@ def timer():
     global timer_event
     # wait 15 seconds or until the flag is set to True
     print("Start counting...")
-    timer_event.wait(15)
+    timer_event.wait(10)
     # if the flag is set to true, this mean the door is close before timeout
     if timer_event.isSet():
+        print("Stop timer ...")
         pass
     # If timeout and nobody closes the door, ring the buzzer and turn off the relay to announce closing the door
     else:
         print("Turning on the buzzer and switch off the light ...")
-        if isMircrobitConnected and state['buzzer'] == 0:
+        if isMicrobitConnected and state['buzzer'] == 0:
             print(f"Sending data to sensor: bbc-buzzer:1#")
             ser.write("bbc-buzzer:1#".encode())
             #  update the current state
@@ -147,26 +150,29 @@ def timer():
             client.publish(AIO_FEED_ID['relay'], 0)
 
 def listenToCamera(img_id, img_url):
-    time.sleep(10)
+    global timer_thread
+    global timer_event
+    time.sleep(2)
     img_resp = urllib.request.urlopen(img_url)
     imgnp = np.array(bytearray(img_resp.read()),dtype=np.uint8)
     frame = cv2.imdecode(imgnp, -1)
     size = frame.shape
-    print(f'Frame received: {size}')
+    # print(f'Frame received: {size}')
     # frame = cv2.imread('people2.jpg')
     if frame is not None:
         n_people, processed_img = processOneFrame(frame,img_id)
         print("Number of people detected:", n_people)
+        if n_people > 0 and timer_event.isSet() == False:
+            timer_event.set()
         if n_people != state['human']:
             # publish human detection result to Adafruit
+            state["human"] = n_people
             client.publish(AIO_FEED_ID['human'], int(n_people))
 
         # every 30 seconds, update the frame to adafruit
-        if img_id % 3 == 0:
+        if img_id % 5 == 0:
             client.publish(AIO_FEED_ID['frame'], encodeImage64(frame))
 
-    global timer_thread
-    global timer_event
     # if there is at least one people, turn on the relay (turn on the light system)
     if n_people > 0 and state["relay"] == 0:
         print('There is people. Turning light on ...')
@@ -245,11 +251,18 @@ def processOneFrame(img0, cnt):  # a numpy array read by cv2 framework
     return NoPeople, imgRaw
 
 def fetchInit():
-    global client
-    client.receive('bbc-door')
-    client.receive('bbc-relay')
-    client.receive('bbc-buzzer')
-    client.receive('bbc-human')
+    # global client
+    # client.receive('bbc-door')
+    # client.receive('bbc-relay')
+    # client.receive('bbc-buzzer')
+    # client.receive('bbc-human')
+    global state
+    state = {
+        'human': -1,
+        'relay': 0,
+        'buzzer': 0,
+        'door': -1
+    }
 
 def logState():
     global state
@@ -286,29 +299,30 @@ if __name__ == "__main__":
     client.connect()
     client.loop_background()
 
-    time.sleep(5)
+    # time.sleep(5)
     # fetch initial data and store to state dict
     fetchInit()
 
     # wait until all data has been fetched
-    while len(state) != 4:
-        continue
-    init = False
+    # while len(state) != 4:
+    #     continue
+    # init = False
     print('Initial state:')
     logState()
 
     # Connect to serial port
     serialPort = getPort()
-    isMircrobitConnected = False
+    isMicrobitConnected = False
     if serialPort != "None":
-        isMircrobitConnected = True
+        isMicrobitConnected = True
         ser = serial.Serial(port=serialPort, baudrate=115200)
     print(f'Connected to serial port: {serialPort}')
-    # print(isMircrobitConnected)
+    # print(isMicrobitConnected)
     mess = ""
 
     # Initalize YOLO model and utilities
     weights='crowdhuman_yolov5m.pt' # modify your weight here
+    # weights = 'best.pt'
     device='cpu'
     conf_thres = 0.25
     iou_thres = 0.45
@@ -324,7 +338,7 @@ if __name__ == "__main__":
     timer_thread = None
 
     # Camera set up and start thread for reading camera frames
-    url = 'http://192.168.137.117/cam-hi.jpg'
+    url = 'http://192.168.137.192/cam-hi.jpg'
     image_id = 0
     # camera_thread = threading.Thread(target=listenToCamera, args= (image_id, url))
     # camera_thread.start()
@@ -334,7 +348,7 @@ if __name__ == "__main__":
     camera_thread = None
     while True:
         # read serial data
-        if isMircrobitConnected == True:
+        if isMicrobitConnected == True:
             # print("Reading Sensor Data...")
             readSerial()
         # Reading camera
