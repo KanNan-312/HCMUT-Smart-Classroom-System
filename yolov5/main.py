@@ -85,16 +85,33 @@ def processData(data):
     splitData = data.split(":")
     if len(splitData) != 3 or splitData[2] == "":
         return
-    # touch the button, only accept the data when the state is changed
+    # touch the button to turn off the buzzer, only accept the data when the state is changed
     if splitData[1] == "BUZZER":
         print(f"Receive buzzer sensor data: {splitData}")
         state['buzzer'] = 0
         client.publish(AIO_FEED_ID['buzzer'], splitData[2])
+        # turn off the alert flag
+        if state['alert'] == 1:
+            state['alert'] = 0
+            client.publish(AIO_FEED_ID['alert'], "0")
+
     if splitData[1] == "DOOR" and int(splitData[2]) != state['door']:
         print(f"Receive door sensor data: {splitData}")
         # If the door is closed, stop the timer thread
-        if splitData[2] == "0" and timer_event is not None:
-            timer_event.set()
+        if splitData[2] == "0":
+            # if the timer is counting, stop the timer
+            if timer_event is not None:
+                timer_event.set()
+            # if the buzzer is ringing, stop it and set the alert flag off
+            if state['buzzer'] == 1:
+                ser.write("bbc-buzzer:0#".encode())
+                #  update the current state
+                state["buzzer"] = 0
+                client.publish(AIO_FEED_ID['buzzer'], "0")
+                # set alert flag off
+                client.publish(AIO_FEED_ID['alert'], "0")
+                state['alert'] = 0
+                
         state['door'] = int(splitData[2])
         client.publish(AIO_FEED_ID['door'], splitData[2])
 
@@ -129,7 +146,7 @@ def timer():
     global timer_event
     # wait 15 seconds or until the flag is set to True
     print("Start counting...")
-    timer_event.wait(10)
+    timer_event.wait(20)
     # if the flag is set to true, this mean the door is close before timeout
     if timer_event.isSet():
         print("Stop timer ...")
@@ -137,17 +154,31 @@ def timer():
     # If timeout and nobody closes the door, ring the buzzer and turn off the relay to announce closing the door
     else:
         print("Turning on the buzzer and switch off the light ...")
-        if isMicrobitConnected and state['buzzer'] == 0:
+        if isMicrobitConnected:
             print(f"Sending data to sensor: bbc-buzzer:1#")
             ser.write("bbc-buzzer:1#".encode())
             #  update the current state
             state["buzzer"] = 1
             client.publish(AIO_FEED_ID['buzzer'], "1")
+            # start alert
+            client.publish(AIO_FEED_ID['alert'], "1")
+            state['alert'] = 1
+
         if isMicrobitConnected and state['relay'] == 1:
             print(f"Sending data to sensor: bbc-relay:0#")
             ser.write("bbc-relay:0#".encode())
             state["relay"] = 0
             client.publish(AIO_FEED_ID['relay'], 0)
+
+def detectHuman(frame,img_id):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    humans = human_cascade.detectMultiScale(gray, 1.3, 5)
+    print(humans)
+    num_people = len(humans)
+    for (x,y,w,h) in humans:
+        frame = cv2.rectangle(frame,(x,y),(x+w,y+h),(255,0,0),2)
+    cv2.imwrite(f'./images/{img_id}.png', frame)
+    return num_people, frame
 
 def listenToCamera(img_id, img_url):
     global timer_thread
@@ -161,22 +192,35 @@ def listenToCamera(img_id, img_url):
     # frame = cv2.imread('people2.jpg')
     if frame is not None:
         n_people, processed_img = processOneFrame(frame,img_id)
+        # n_people, processed_img = detectHuman(frame,img_id)
         print("Number of people detected:", n_people)
         if n_people > 0 and timer_event.isSet() == False:
             timer_event.set()
+        if n_people > 0 and state['buzzer'] == 1:
+            print('Human detected. Turning buzzer off')
+            print(f"Sending data to sensor: bbc-buzzer:0#")
+            ser.write("bbc-buzzer:0#".encode())
+            #  update the current state
+            state["buzzer"] = 0
+            client.publish(AIO_FEED_ID['buzzer'], "0")
+            # set alert flag off
+            client.publish(AIO_FEED_ID['alert'], "0")
+            state['alert'] = 0
+
         if n_people != state['human']:
             # publish human detection result to Adafruit
             state["human"] = n_people
             client.publish(AIO_FEED_ID['human'], int(n_people))
 
-        # every 30 seconds, update the frame to adafruit
+        # every 10 seconds, update the frame to adafruit
         if img_id % 5 == 0:
             client.publish(AIO_FEED_ID['frame'], encodeImage64(frame))
 
     # if there is at least one people, turn on the relay (turn on the light system)
     if n_people > 0 and state["relay"] == 0:
         print('There is people. Turning light on ...')
-        ser.write('bbc-relay:1#'.encode())
+        if isMicrobitConnected:
+            ser.write('bbc-relay:1#'.encode())
         state["relay"] = 1
         client.publish(AIO_FEED_ID['relay'], '1')
 
@@ -186,44 +230,6 @@ def listenToCamera(img_id, img_url):
             timer_event.clear()
             timer_thread = threading.Thread(target=timer)
             timer_thread.start()
-
-# def listenToCamera(img_id, img_url):
-#     loop_cnt = 0
-#     timer_thread = None
-#     print('Start receiving frame')
-#     while True:
-#         # print('Thread camera')
-#         img_resp = urllib.request.urlopen(img_url)
-#         imgnp = np.array(bytearray(img_resp.read()),dtype=np.uint8)
-#         frame = cv2.imdecode(imgnp, -1)
-#         # frame = cv2.imread('people2.jpg')
-#         if frame is not None:
-#             n_people, processed_img = processOneFrame(frame,img_id)
-#             print("Number of people:", n_people)
-
-#             # publish human detection result to Adafruit
-#             client.publish(AIO_FEED_ID['human'], int(n_people))
-#             # every 30 seconds, update the frame to adafruit
-#             # if loop_cnt % 3 == 0:
-#                 # client.publish(AIO_FEED_ID['frame'], encodeImage64(frame))
-
-#         global timer_event
-#         # if there is at least one people, turn on the relay (turn on the light)
-#         if n_people > 0 and state["relay"] == 0:
-#             print('There is people. Turning light on ...')
-#             ser.write('bbc-relay:1#'.encode())
-#             state["relay"] = 1
-#             client.publish(AIO_FEED_ID['relay'], 1)
-#         # if there is people, check the door condition
-#         elif n_people == 0 and state["door"] == 1:
-#             if timer_thread is None or timer_thread.is_alive() == False:
-#                 timer_event.clear()
-#                 timer_thread = threading.Thread(target=timer)
-#                 timer_thread.start()
-#         # read a frame every 10 seconds
-#         time.sleep(10)
-#         # update loop count
-#         loop_cnt += 1
 
 
 # Model related functions
@@ -261,7 +267,8 @@ def fetchInit():
         'human': -1,
         'relay': 0,
         'buzzer': 0,
-        'door': -1
+        'door': -1,
+        'alert': 0
     }
 
 def logState():
@@ -278,7 +285,8 @@ if __name__ == "__main__":
                    "frame": "bbc-cam",
                    "relay": "bbc-relay",
                    "buzzer": "bbc-buzzer",
-                   "door": "bbc-door"
+                   "door": "bbc-door",
+                   "alert": "bbc-alert"
                    }
 
     AIO_USERNAME = str(api_key['Username'])
@@ -319,7 +327,8 @@ if __name__ == "__main__":
     print(f'Connected to serial port: {serialPort}')
     # print(isMicrobitConnected)
     mess = ""
-
+    
+    
     # Initalize YOLO model and utilities
     weights='crowdhuman_yolov5m.pt' # modify your weight here
     # weights = 'best.pt'
@@ -333,18 +342,26 @@ if __name__ == "__main__":
     # img_size=600,800
     img_size = 640,640
     
+
+    # human_cascade = cv2.CascadeClassifier('haarcascade_upperbody.xml')
+    # human_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+
     # timer event
     timer_event = threading.Event()
     timer_thread = None
 
     # Camera set up and start thread for reading camera frames
-    url = 'http://192.168.137.192/cam-hi.jpg'
+    url = 'http://192.168.137.98/cam-hi.jpg'
     image_id = 0
     # camera_thread = threading.Thread(target=listenToCamera, args= (image_id, url))
     # camera_thread.start()
 
+    if isMicrobitConnected == True: 
+        ser.write('bbc-relay:0#'.encode())
+        ser.write('bbc-buzzer:0#'.encode())
+
     # start the main loop: reading serial data every one second
-    
+
     camera_thread = None
     while True:
         # read serial data
