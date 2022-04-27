@@ -225,11 +225,19 @@ def listenToCamera(img_id, img_url):
         client.publish(AIO_FEED_ID['relay'], '1')
 
     # if there is people and the door is opened, start the timer thread
-    elif n_people == 0 and state["door"] == 1:
-        if timer_thread is None or timer_thread.is_alive() == False:
-            timer_event.clear()
-            timer_thread = threading.Thread(target=timer)
-            timer_thread.start()
+    elif n_people == 0:
+        if state["door"] == 1:
+            if timer_thread is None or timer_thread.is_alive() == False:
+                timer_event.clear()
+                timer_thread = threading.Thread(target=timer)
+                timer_thread.start()
+        # No people, door closed, turn off the light
+        else:
+            if state['relay'] == 1 and isMicrobitConnected:
+                print(f"Sending data to sensor: bbc-relay:0#")
+                ser.write("bbc-relay:0#".encode())
+                state["relay"] = 0
+                client.publish(AIO_FEED_ID['relay'], 0)
 
 
 # Model related functions
@@ -245,16 +253,19 @@ def processOneFrame(img0, cnt):  # a numpy array read by cv2 framework
         img = img.unsqueeze(0)
 
     pred = model(img, augment=True)[0]
+    no_people = 0
     pred = non_max_suppression(pred, conf_thres, iou_thres, classes=None, agnostic=False)[0]
     pred[:, :4] = scale_coords(img.shape[2:], pred[:, :4], img0.shape).round()
-
+    # cls = 0: persons, cls = 1: heads
     for *xyxy, conf, cls in pred:
         label = f'{names[int(cls)]} {conf:.2f}'
-        plot_one_box(xyxy, imgRaw, label=label, color=colors[int(cls)], line_thickness=3)
+        if int(cls) == 1:
+            no_people += 1
+            plot_one_box(xyxy, imgRaw, label=label, color=colors[int(cls)], line_thickness=3)
     
     cv2.imwrite(f'./images/{cnt}.png', imgRaw)
-    NoPeople = len(pred)
-    return NoPeople, imgRaw
+    # NoPeople = len(pred)
+    return no_people, imgRaw
 
 def fetchInit():
     # global client
@@ -333,7 +344,7 @@ if __name__ == "__main__":
     weights='crowdhuman_yolov5m.pt' # modify your weight here
     # weights = 'best.pt'
     device='cpu'
-    conf_thres = 0.25
+    conf_thres = 0.5
     iou_thres = 0.45
     model = attempt_load(weights, map_location=device)
     names = model.module.names if hasattr(model, 'module') else model.names
@@ -351,7 +362,7 @@ if __name__ == "__main__":
     timer_thread = None
 
     # Camera set up and start thread for reading camera frames
-    url = 'http://192.168.137.98/cam-hi.jpg'
+    url = 'http://192.168.137.27/cam-hi.jpg'
     image_id = 0
     # camera_thread = threading.Thread(target=listenToCamera, args= (image_id, url))
     # camera_thread.start()
